@@ -14,7 +14,125 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      collectors: {
+        Row: {
+          badge: string
+          created_at: string
+          distance: string | null
+          id: string
+          name: string
+          name_ta: string
+          phone: string | null
+          pickups: number
+          rating: number
+        }
+        Insert: {
+          badge?: string
+          created_at?: string
+          distance?: string | null
+          id: string
+          name: string
+          name_ta: string
+          phone?: string | null
+          pickups?: number
+          rating?: number
+        }
+        Update: {
+          badge?: string
+          created_at?: string
+          distance?: string | null
+          id?: string
+          name?: string
+          name_ta?: string
+          phone?: string | null
+          pickups?: number
+          rating?: number
+        }
+        Relationships: []
+      }
+      materials: {
+        Row: {
+          color: string
+          icon: string
+          id: string
+          name: string
+          name_ta: string
+          price: number
+          sort_order: number
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          color: string
+          icon: string
+          id: string
+          name: string
+          name_ta: string
+          price: number
+          sort_order?: number
+          unit?: string
+          updated_at?: string
+        }
+        Update: {
+          color?: string
+          icon?: string
+          id?: string
+          name?: string
+          name_ta?: string
+          price?: number
+          sort_order?: number
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      pickups: {
+        Row: {
+          address: string
+          amount: number
+          code: string
+          collector_id: string | null
+          created_at: string
+          id: string
+          materials: Json
+          pickup_date: string
+          preferred_time: string
+          status: string
+        }
+        Insert: {
+          address: string
+          amount?: number
+          code: string
+          collector_id?: string | null
+          created_at?: string
+          id?: string
+          materials?: Json
+          pickup_date?: string
+          preferred_time?: string
+          status?: string
+        }
+        Update: {
+          address?: string
+          amount?: number
+          code?: string
+          collector_id?: string | null
+          created_at?: string
+          id?: string
+          materials?: Json
+          pickup_date?: string
+          preferred_time?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pickups_collector_id_fkey"
+            columns: ["collector_id"]
+            isOneToOne: false
+            referencedRelation: "collectors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
