@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { theme, T, getStatusColor } from "@/lib/scrapTheme";
 import {
   fetchMaterials,
@@ -6,7 +7,9 @@ import {
   fetchPickups,
   createPickup,
   computeAnalytics,
+  subscribeToScrapChanges,
 } from "@/api/scrapApi";
+import { toast } from "@/components/ui/sonner";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Icon = ({ name, size = 20, color = "currentColor" }) => {
@@ -184,13 +187,134 @@ const Confetti = () => {
 };
 
 // ─── Schedule Pickup ──────────────────────────────────────────────────────────
+const getPricePerKg = (material) => Number(material?.price_per_kg ?? material?.price ?? 0) || 0;
+
+const cardGradients = [
+  "linear-gradient(145deg, rgba(18, 214, 127, 0.96), rgba(12, 167, 184, 0.94))",
+  "linear-gradient(145deg, rgba(16, 185, 129, 0.96), rgba(34, 211, 238, 0.9))",
+  "linear-gradient(145deg, rgba(5, 150, 105, 0.96), rgba(132, 204, 22, 0.9))",
+  "linear-gradient(145deg, rgba(20, 184, 166, 0.96), rgba(59, 130, 246, 0.9))",
+];
+
+const MotionCounter = ({ value, format = (v) => Math.round(v) }) => (
+  <motion.span
+    key={Math.round((Number(value) || 0) * 100)}
+    initial={{ opacity: 0, y: 8, filter: "blur(6px)" }}
+    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+    transition={{ type: "spring", stiffness: 260, damping: 24 }}
+  >
+    {format(Number(value) || 0)}
+  </motion.span>
+);
+
+const Material3DCard = ({ mat, index, selected, weight, lang, t, onToggle, onWeightChange }) => {
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const smoothX = useSpring(x, { stiffness: 190, damping: 22, mass: 0.4 });
+  const smoothY = useSpring(y, { stiffness: 190, damping: 22, mass: 0.4 });
+  const rotateX = useTransform(smoothY, [-0.5, 0.5], [9, -9]);
+  const rotateY = useTransform(smoothX, [-0.5, 0.5], [-10, 10]);
+  const price = getPricePerKg(mat);
+  const kg = Number(weight) || 0;
+  const itemTotal = kg * price;
+  const name = lang === "ta" ? mat.nameTA || mat.name : mat.name;
+  const gradient = cardGradients[index % cardGradients.length];
+
+  const handlePointerMove = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    x.set((event.clientX - rect.left) / rect.width - 0.5);
+    y.set((event.clientY - rect.top) / rect.height - 0.5);
+  };
+
+  const resetTilt = () => {
+    x.set(0);
+    y.set(0);
+  };
+
+  return (
+    <motion.div layout initial={{ opacity: 0, y: 26, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 260, damping: 24, delay: index * 0.035 }} style={{ perspective: 900 }}>
+      <motion.div
+        role="button"
+        tabIndex={0}
+        layout
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={resetTilt}
+        whileTap={{ scale: 0.965 }}
+        style={{
+          rotateX,
+          rotateY,
+          transformStyle: "preserve-3d",
+          width: "100%",
+          minHeight: selected ? 190 : 138,
+          padding: 0,
+          border: selected ? "1px solid rgba(167, 243, 208, 0.95)" : "1px solid rgba(255,255,255,0.45)",
+          borderRadius: 24,
+          background: gradient,
+          boxShadow: selected ? "0 26px 55px rgba(16, 185, 129, 0.34), 0 0 0 1px rgba(255,255,255,0.42) inset, 0 0 32px rgba(45, 212, 191, 0.55)" : "0 18px 36px rgba(15, 118, 110, 0.19), 0 1px 0 rgba(255,255,255,0.5) inset",
+          color: "#fff",
+          cursor: "pointer",
+          overflow: "hidden",
+          position: "relative",
+          textAlign: "left",
+          transition: "border-color 0.25s ease, box-shadow 0.25s ease",
+        }}
+      >
+        <motion.span aria-hidden="true" animate={{ y: [0, -8, 0], opacity: selected ? [0.38, 0.7, 0.38] : [0.2, 0.35, 0.2] }} transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut", delay: index * 0.2 }} style={{ position: "absolute", right: -24, top: -32, width: 106, height: 106, borderRadius: "50%", background: "rgba(255,255,255,0.28)", filter: "blur(1px)" }} />
+        <span aria-hidden="true" style={{ position: "absolute", inset: 0, background: selected ? "radial-gradient(circle at 28% 18%, rgba(255,255,255,0.45), transparent 30%), linear-gradient(180deg, rgba(255,255,255,0.2), rgba(255,255,255,0.03))" : "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))" }} />
+        <div style={{ position: "relative", padding: 16, transform: "translateZ(34px)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+            <motion.div animate={{ rotate: selected ? [0, -5, 5, 0] : 0, scale: selected ? 1.12 : 1 }} transition={{ type: "spring", stiffness: 320, damping: 18 }} style={{ width: 48, height: 48, borderRadius: 17, background: "rgba(255,255,255,0.24)", boxShadow: "0 10px 24px rgba(0,0,0,0.12), 0 1px 0 rgba(255,255,255,0.42) inset", display: "grid", placeItems: "center", fontSize: 28 }}>
+              {mat.icon || "♻"}
+            </motion.div>
+            <motion.div animate={{ scale: selected ? 1 : 0.92, opacity: selected ? 1 : 0.72 }} style={{ minWidth: 30, height: 30, borderRadius: "50%", background: selected ? "rgba(255,255,255,0.96)" : "rgba(255,255,255,0.18)", color: selected ? "#047857" : "#fff", display: "grid", placeItems: "center", fontWeight: 900, boxShadow: selected ? "0 0 22px rgba(255,255,255,0.7)" : "none" }}>
+              {selected ? "✓" : "+"}
+            </motion.div>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 850, lineHeight: 1.15 }}>{name}</p>
+            <p style={{ margin: "6px 0 0", fontSize: 12, opacity: 0.82 }}>Live market rate</p>
+            <p style={{ margin: "6px 0 0", fontSize: 24, fontWeight: 900, letterSpacing: 0 }}>
+              ₹{price.toLocaleString("en-IN")} <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.78 }}>{t.pricePerKg}</span>
+            </p>
+          </div>
+
+          <AnimatePresence initial={false}>
+            {selected && (
+              <motion.div layout initial={{ opacity: 0, height: 0, y: -8 }} animate={{ opacity: 1, height: "auto", y: 0 }} exit={{ opacity: 0, height: 0, y: -8 }} transition={{ type: "spring", stiffness: 260, damping: 25 }} onClick={(e) => e.stopPropagation()} style={{ overflow: "hidden" }}>
+                <div style={{ marginTop: 14, padding: 12, borderRadius: 18, background: "rgba(255,255,255,0.18)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.28)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <input type="number" inputMode="decimal" placeholder="0.0 kg" min="0" step="0.1" value={weight || ""} onChange={(e) => onWeightChange(e.target.value)} style={{ width: "100%", minWidth: 0, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.38)", borderRadius: 14, color: "#064E3B", background: "rgba(255,255,255,0.94)", fontSize: 16, fontWeight: 800, outline: "none", boxSizing: "border-box" }} />
+                    <div style={{ textAlign: "right", minWidth: 76 }}>
+                      <p style={{ margin: 0, fontSize: 10, opacity: 0.78 }}>Total</p>
+                      <p style={{ margin: 0, fontSize: 17, fontWeight: 900 }}>₹<MotionCounter value={itemTotal} /></p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
+  const today = new Date().toISOString().slice(0, 10);
   const [step, setStep] = useState(1);
   const [selected, setSelected] = useState({});
   const [weights, setWeights] = useState({});
   const [address, setAddress] = useState("");
+  const [pickupDate, setPickupDate] = useState(today);
   const [time, setTime] = useState("morning");
-  const [listening, setListening] = useState(false);
   const [scheduled, setScheduled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -202,19 +326,12 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
     .reduce((acc, [id]) => {
       const mat = getMaterial(id);
       const w = parseFloat(weights[id] || 0);
-      return acc + (mat.price || 0) * w;
+      return acc + getPricePerKg(mat) * w;
     }, 0);
 
   const selectedCount = Object.values(selected).filter(Boolean).length;
   const topCollector = collectors[0];
-
-  const handleVoice = () => {
-    setListening(true);
-    setTimeout(() => {
-      setAddress("12, Kovai Road, Pollachi - 642 001");
-      setListening(false);
-    }, 1600);
-  };
+  const formattedPickupDate = pickupDate ? new Date(`${pickupDate}T00:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "";
 
   const handleSubmit = async () => {
     setError("");
@@ -223,7 +340,7 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
       const matPayload = Object.entries(selected)
         .filter(([, v]) => v)
         .map(([id]) => ({ id, weight: parseFloat(weights[id] || 0) }));
-      await createPickup({ materials: matPayload, address, time, amount: total });
+      await createPickup({ materials: matPayload, address, time, pickupDate, amount: total });
       setScheduled(true);
       onScheduled && onScheduled();
     } catch (e) {
@@ -248,7 +365,7 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
             ₹<Counter value={total} format={(v) => Math.round(v)} />
           </p>
         </div>
-        <button className="ss-press" onClick={() => { setScheduled(false); setStep(1); setSelected({}); setWeights({}); setAddress(""); }}
+        <button className="ss-press" onClick={() => { setScheduled(false); setStep(1); setSelected({}); setWeights({}); setAddress(""); setPickupDate(today); }}
           style={{ background: theme.colors.primary, color: "#fff", border: "none", borderRadius: 12, padding: "14px 32px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
           Schedule Another
         </button>
@@ -267,48 +384,47 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
       </div>
 
       {step === 1 && (
-        <div className="ss-fade-in">
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: theme.colors.text }}>{t.selectMaterials}</h3>
-          <p style={{ fontSize: 13, color: theme.colors.textMuted, marginBottom: 16 }}>Select what you want to sell</p>
-          <div className="ss-stagger" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {materials.map((mat) => (
-              <div key={mat.id} className="ss-press"
-                onClick={() => setSelected((p) => ({ ...p, [mat.id]: !p[mat.id] }))}
-                style={{
-                  border: `2px solid ${selected[mat.id] ? theme.colors.primary : theme.colors.border}`,
-                  borderRadius: 12, padding: 14, cursor: "pointer",
-                  background: selected[mat.id] ? theme.colors.primaryPale : "#fff",
-                  transition: "all 0.25s ease",
-                  transform: selected[mat.id] ? "translateY(-2px)" : "none",
-                  boxShadow: selected[mat.id] ? "0 6px 16px rgba(27,94,59,0.18)" : "none",
-                }}>
-                <div style={{ fontSize: 24, marginBottom: 4 }}>{mat.icon}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: theme.colors.text }}>{lang === "ta" ? mat.nameTA : mat.name}</div>
-                <div style={{ fontSize: 12, color: theme.colors.primary, fontWeight: 700 }}>₹{mat.price}/{t.pricePerKg}</div>
-                {selected[mat.id] && (
-                  <input className="ss-fade-in"
-                    type="number" placeholder="kg" min="0" step="0.1"
-                    value={weights[mat.id] || ""}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setWeights((p) => ({ ...p, [mat.id]: e.target.value }))}
-                    style={{ width: "100%", marginTop: 8, padding: "6px 8px", border: `1px solid ${theme.colors.primary}`, borderRadius: 8, fontSize: 13, background: "#fff" }} />
-                )}
-              </div>
-            ))}
-          </div>
-          {total > 0 && (
-            <div className="ss-fade-in-down" style={{ background: theme.colors.accentPale, borderRadius: 12, padding: "12px 16px", margin: "16px 0", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 14, color: theme.colors.warning }}>{t.estimatedAmount}</span>
-              <span style={{ fontSize: 18, fontWeight: 700, color: theme.colors.warning }}>
-                ₹<Counter value={total} format={(v) => Math.round(v)} />
-              </span>
+        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 220, damping: 24 }}>
+          <div style={{ position: "relative", overflow: "hidden", borderRadius: 28, padding: "18px 16px", marginBottom: 18, color: "#fff", background: "linear-gradient(135deg, #052E2B 0%, #047857 48%, #22D3EE 100%)", boxShadow: "0 24px 52px rgba(5, 150, 105, 0.28)" }}>
+            <motion.div aria-hidden="true" animate={{ y: [0, -10, 0], x: [0, 8, 0] }} transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }} style={{ position: "absolute", right: -38, top: -42, width: 150, height: 150, borderRadius: "50%", background: "rgba(255,255,255,0.18)", filter: "blur(2px)" }} />
+            <div style={{ position: "relative" }}>
+              <p style={{ margin: 0, fontSize: 12, fontWeight: 800, textTransform: "uppercase", opacity: 0.76, letterSpacing: 0.8 }}>Smart scrap value</p>
+              <h3 style={{ fontSize: 26, fontWeight: 900, margin: "6px 0 6px", letterSpacing: 0, lineHeight: 1.05 }}>{t.selectMaterials}</h3>
+              <p style={{ fontSize: 13, opacity: 0.82, margin: 0, maxWidth: 280 }}>Tap a material, add weight, and watch the payout update instantly.</p>
             </div>
-          )}
-          <button className="ss-press" disabled={selectedCount === 0} onClick={() => setStep(2)}
-            style={{ width: "100%", padding: "14px", background: selectedCount > 0 ? theme.colors.primary : "#D1D5DB", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: selectedCount > 0 ? "pointer" : "not-allowed", marginTop: 8, transition: "background 0.25s" }}>
-            Continue ({selectedCount} selected)
-          </button>
-        </div>
+          </div>
+
+          <motion.div layout style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <AnimatePresence>
+              {materials.map((mat, index) => (
+                <Material3DCard
+                  key={mat.id}
+                  mat={mat}
+                  index={index}
+                  selected={Boolean(selected[mat.id])}
+                  weight={weights[mat.id]}
+                  lang={lang}
+                  t={t}
+                  onToggle={() => setSelected((p) => ({ ...p, [mat.id]: !p[mat.id] }))}
+                  onWeightChange={(value) => setWeights((p) => ({ ...p, [mat.id]: value }))}
+                />
+              ))}
+            </AnimatePresence>
+          </motion.div>
+
+          <motion.div layout initial={false} animate={{ opacity: selectedCount > 0 ? 1 : 0.74, y: selectedCount > 0 ? 0 : 4 }} style={{ position: "sticky", bottom: 88, zIndex: 10, marginTop: 18, padding: 14, borderRadius: 22, background: "rgba(6, 78, 59, 0.82)", backdropFilter: "blur(18px)", border: "1px solid rgba(167, 243, 208, 0.28)", boxShadow: "0 18px 42px rgba(4, 120, 87, 0.32)", color: "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 12 }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, opacity: 0.72 }}>{selectedCount} selected</p>
+                <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 800 }}>{t.estimatedAmount}</p>
+              </div>
+              <p style={{ margin: 0, fontSize: 28, fontWeight: 950, letterSpacing: 0 }}>₹<MotionCounter value={total} /></p>
+            </div>
+            <motion.button whileTap={{ scale: 0.965 }} disabled={selectedCount === 0} onClick={() => setStep(2)} style={{ width: "100%", padding: "14px", background: selectedCount > 0 ? "linear-gradient(135deg, #A7F3D0, #67E8F9)" : "rgba(255,255,255,0.18)", color: selectedCount > 0 ? "#064E3B" : "rgba(255,255,255,0.62)", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 900, cursor: selectedCount > 0 ? "pointer" : "not-allowed", boxShadow: selectedCount > 0 ? "0 12px 28px rgba(45, 212, 191, 0.28)" : "none" }}>
+              Continue ({selectedCount} selected)
+            </motion.button>
+          </motion.div>
+        </motion.div>
       )}
 
       {step === 2 && (
@@ -316,14 +432,13 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{t.enterAddress}</h3>
           <p style={{ fontSize: 13, color: theme.colors.textMuted, marginBottom: 16 }}>Where should we pick up?</p>
           <div style={{ position: "relative", marginBottom: 16 }}>
-            <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="12, Kovai Road, Pollachi..."
+            <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Enter the pickup address"
               rows={3} style={{ width: "100%", padding: "12px", border: `1px solid ${theme.colors.border}`, borderRadius: 12, fontSize: 14, resize: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-            <button onClick={handleVoice} className={listening ? "ss-mic-pulse" : "ss-press"}
-              style={{ position: "absolute", bottom: 10, right: 10, background: listening ? theme.colors.danger : theme.colors.primary, border: "none", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <Icon name="mic" size={16} color="#fff" />
-            </button>
           </div>
-          {listening && <p className="ss-fade-in" style={{ fontSize: 13, color: theme.colors.danger, textAlign: "center" }}>🎙 Listening...</p>}
+
+          <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Pickup Date</p>
+          <input type="date" value={pickupDate} min={today} onChange={(e) => setPickupDate(e.target.value)}
+            style={{ width: "100%", padding: "12px", border: `1px solid ${theme.colors.border}`, borderRadius: 12, fontSize: 14, marginBottom: 16, boxSizing: "border-box", fontFamily: "inherit" }} />
 
           <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{t.chooseTime}</p>
           <div className="ss-stagger">
@@ -340,7 +455,7 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
 
           <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
             <button className="ss-press" onClick={() => setStep(1)} style={{ flex: 1, padding: "14px", background: "#F3F4F6", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>{t.cancel}</button>
-            <button className="ss-press" disabled={!address} onClick={() => setStep(3)} style={{ flex: 2, padding: "14px", background: address ? theme.colors.primary : "#D1D5DB", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: address ? "pointer" : "not-allowed" }}>Continue</button>
+            <button className="ss-press" disabled={!address || !pickupDate} onClick={() => setStep(3)} style={{ flex: 2, padding: "14px", background: address && pickupDate ? theme.colors.primary : "#D1D5DB", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: address && pickupDate ? "pointer" : "not-allowed" }}>Continue</button>
           </div>
         </div>
       )}
@@ -372,7 +487,7 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
               return (
                 <div key={id} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14 }}>
                   <span>{mat.icon} {lang === "ta" ? mat.nameTA : mat.name} · {w}kg</span>
-                  <span style={{ fontWeight: 600 }}>₹{((mat.price || 0) * w).toFixed(0)}</span>
+                  <span style={{ fontWeight: 600 }}>₹{(getPricePerKg(mat) * w).toFixed(0)}</span>
                 </div>
               );
             })}
@@ -384,7 +499,7 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
 
           <div style={{ background: "#F9FAFB", borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 13, color: theme.colors.textMuted }}>
             <div><Icon name="mappin" size={13} color={theme.colors.textMuted} /> {address}</div>
-            <div style={{ marginTop: 4 }}><Icon name="calendar" size={13} color={theme.colors.textMuted} /> Today · {time === "morning" ? t.morning : time === "afternoon" ? t.afternoon : t.evening}</div>
+            <div style={{ marginTop: 4 }}><Icon name="calendar" size={13} color={theme.colors.textMuted} /> {formattedPickupDate} - {time === "morning" ? t.morning : time === "afternoon" ? t.afternoon : t.evening}</div>
           </div>
 
           {error && <p style={{ color: theme.colors.danger, fontSize: 13, textAlign: "center" }}>{error}</p>}
@@ -405,12 +520,18 @@ const SchedulePickup = ({ t, lang, materials, collectors, onScheduled }) => {
 const PriceList = ({ t, lang, materials }) => {
   const [search, setSearch] = useState("");
   const filtered = materials.filter((m) => (lang === "ta" ? m.nameTA : m.name).toLowerCase().includes(search.toLowerCase()));
+  const latestUpdate = materials
+    .map((m) => m.updatedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const latestUpdateLabel = latestUpdate ? new Date(latestUpdate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "Supabase";
   return (
     <div className="ss-fade-in">
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search material..."
         style={{ width: "100%", padding: "12px 14px", border: `1px solid ${theme.colors.border}`, borderRadius: 12, fontSize: 14, marginBottom: 16, boxSizing: "border-box" }} />
       <div className="ss-fade-in-down" style={{ background: theme.colors.accentPale, borderRadius: 12, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: theme.colors.warning }}>
-        <Icon name="trending" size={14} color={theme.colors.warning} /> Copper prices up 8% this week
+        <Icon name="trending" size={14} color={theme.colors.warning} /> Prices loaded from Supabase · Updated {latestUpdateLabel}
       </div>
       <div className="ss-stagger">
         {filtered.map((mat) => (
@@ -423,7 +544,7 @@ const PriceList = ({ t, lang, materials }) => {
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <p style={{ margin: 0, fontSize: 20, fontWeight: 800, color: theme.colors.primary }}>₹{mat.price}</p>
+              <p style={{ margin: 0, fontSize: 20, fontWeight: 800, color: theme.colors.primary }}>₹{getPricePerKg(mat)}</p>
               <p style={{ margin: 0, fontSize: 11, color: theme.colors.textMuted }}>{t.pricePerKg}</p>
             </div>
           </div>
@@ -531,7 +652,7 @@ const Dashboard = ({ t, role, materials, collectors, analytics }) => {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setAdminPrices(Object.fromEntries(materials.map((m) => [m.id, m.price])));
+    setAdminPrices(Object.fromEntries(materials.map((m) => [m.id, getPricePerKg(m)])));
   }, [materials]);
 
   const handleSave = () => {
@@ -713,7 +834,25 @@ export default function Index() {
 
   useEffect(() => { loadAll().catch(() => setLoading(false)); }, []);
 
-  const analytics = useMemo(() => computeAnalytics(pickups, materials), [pickups, materials]);
+  useEffect(() => {
+    let refreshTimer;
+    const labels = { materials: "Material prices", collectors: "Collectors", pickups: "Pickups" };
+    const unsubscribe = subscribeToScrapChanges(({ table }) => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        loadAll()
+          .then(() => toast.success(`${labels[table] || "Data"} updated from Supabase`))
+          .catch(() => toast.error("Could not refresh live Supabase data"));
+      }, 250);
+    });
+
+    return () => {
+      clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, []);
+
+  const analytics = useMemo(() => computeAnalytics(pickups, materials, collectors), [pickups, materials, collectors]);
 
   const tabs = [
     { id: "schedule", icon: "calendar", label: t.schedule },
@@ -726,11 +865,12 @@ export default function Index() {
   const roleColors = { household: "#1B5E3B", collector: "#0C4A6E", admin: "#4C1D95" };
   const roleColor = roleColors[role] || theme.colors.primary;
 
-  const notifications = [
-    { id: 1, text: "Balu accepted your pickup request!", time: "5 min ago", read: false },
-    { id: 2, text: "Copper prices increased by 8%", time: "2 hrs ago", read: false },
-    { id: 3, text: "Pickup #P001 completed. ₹170 received.", time: "Yesterday", read: true },
-  ];
+  const notifications = pickups.slice(0, 3).map((pickup) => ({
+    id: pickup.id,
+    text: `Pickup #${pickup.id} is ${pickup.status}. Amount ?${Math.round(pickup.amount || 0)}.`,
+    time: pickup.date,
+    read: pickup.status === "completed",
+  }));
   const notifCount = notifications.filter((n) => !n.read).length;
 
   return (

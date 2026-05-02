@@ -15,9 +15,11 @@ export async function fetchMaterials() {
     name: m.name,
     nameTA: m.name_ta,
     icon: m.icon,
-    price: Number(m.price),
+    price_per_kg: Number(m.price_per_kg ?? m.price ?? 0),
+    price: Number(m.price_per_kg ?? m.price ?? 0),
     unit: m.unit,
     color: m.color,
+    updatedAt: m.updated_at,
   }));
 }
 
@@ -59,11 +61,12 @@ export async function fetchPickups() {
     collector: p.collector?.name || null,
     amount: Number(p.amount),
     address: p.address,
+    preferredTime: p.preferred_time,
   }));
 }
 
-export async function createPickup({ materials, address, time, amount }) {
-  const code = "P" + Math.floor(100 + Math.random() * 900);
+export async function createPickup({ materials, address, time, pickupDate, amount }) {
+  const code = `P${Date.now().toString().slice(-8)}`;
   const { data, error } = await supabase
     .from("pickups")
     .insert({
@@ -72,6 +75,7 @@ export async function createPickup({ materials, address, time, amount }) {
       materials,
       address,
       preferred_time: time,
+      pickup_date: pickupDate,
       amount,
     })
     .select()
@@ -80,8 +84,21 @@ export async function createPickup({ materials, address, time, amount }) {
   return data;
 }
 
+export function subscribeToScrapChanges(onChange) {
+  const channel = supabase
+    .channel("scrapsmart-live-data")
+    .on("postgres_changes", { event: "*", schema: "public", table: "materials" }, (payload) => onChange({ table: "materials", payload }))
+    .on("postgres_changes", { event: "*", schema: "public", table: "collectors" }, (payload) => onChange({ table: "collectors", payload }))
+    .on("postgres_changes", { event: "*", schema: "public", table: "pickups" }, (payload) => onChange({ table: "pickups", payload }))
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
 // ─── Analytics (computed client-side from pickups + materials) ────────────────
-export function computeAnalytics(pickups, materials) {
+export function computeAnalytics(pickups, materials, collectors = []) {
   const matMap = Object.fromEntries(materials.map((m) => [m.id, m]));
   let totalCollected = 0;
   let totalEarnings = 0;
@@ -95,14 +112,14 @@ export function computeAnalytics(pickups, materials) {
       totalCollected += w;
       if (!breakdown[m.id]) breakdown[m.id] = { id: m.id, kg: 0, earnings: 0 };
       breakdown[m.id].kg += w;
-      breakdown[m.id].earnings += w * mat.price;
+      breakdown[m.id].earnings += w * (mat.price_per_kg || mat.price || 0);
     });
   });
   return {
     totalCollected: Math.round(totalCollected * 1000) / 1000,
     totalEarnings: Math.round(totalEarnings),
     monthlyPickups: pickups.length,
-    activeCollectors: 7,
+    activeCollectors: collectors.length,
     materialBreakdown: Object.values(breakdown).sort((a, b) => b.earnings - a.earnings),
   };
 }
